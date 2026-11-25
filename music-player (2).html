@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pemutar Musik</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { height: 100%; margin: 0; background: #000; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif; }
+  .bg-layer { position: fixed; inset: -10%; background-size: cover; background-position: center; filter: blur(50px) brightness(.55) saturate(1.5); transform: scale(1.25); transition: opacity 1.2s ease; z-index: 0; }
+  .glass { background: rgba(255,255,255,.08); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255,255,255,.12); }
+  /* Range */
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: linear-gradient(to right, rgba(255,255,255,.9) var(--p,0%), rgba(255,255,255,.25) var(--p,0%)); outline: none; cursor: pointer; transition: height .15s; }
+  input[type=range]:hover { height: 9px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 0; height: 0; }
+  input[type=range]:hover::-webkit-slider-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+  input[type=range]::-moz-range-thumb { width: 0; height: 0; border: 0; }
+  input[type=range]:hover::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 0; }
+  /* Lyrics */
+  #lyrics { scrollbar-width: none; -ms-overflow-style: none; mask-image: linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%); }
+  #lyrics::-webkit-scrollbar { display: none; }
+  .line { transform-origin: left center; transition: opacity .5s ease, transform .5s ease, filter .5s ease; cursor: pointer; font-weight: 700; line-height: 1.25; color: #fff; padding: .35rem .5rem; border-radius: .75rem; }
+  .line:hover { background: rgba(255,255,255,.08); opacity: 1 !important; filter: none !important; }
+  .cover-shadow { filter: drop-shadow(0 25px 40px rgba(0,0,0,.55)); }
+  .ctrl { transition: transform .15s, opacity .15s; opacity: .85; }
+  .ctrl:hover { opacity: 1; transform: scale(1.08); }
+  .ctrl:active { transform: scale(.94); }
+  #drawer { transition: transform .4s cubic-bezier(.22,1,.36,1); }
+  .song-item.active { background: rgba(255,255,255,.18); }
+</style>
+</head>
+<body class="text-white select-none">
+
+<!-- Latar belakang dinamis (2 layer untuk crossfade) -->
+<div id="bgA" class="bg-layer" style="opacity:1"></div>
+<div id="bgB" class="bg-layer" style="opacity:0"></div>
+<div class="fixed inset-0 bg-black/20 z-0"></div>
+
+<!-- Pemutar YouTube tersembunyi (hanya audio) -->
+<div style="position:fixed;left:0;bottom:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1">
+  <div id="ytPlayer"></div>
+</div>
+
+<!-- Tombol pojok atas -->
+<button id="openDrawer" class="glass fixed top-4 right-4 z-30 w-11 h-11 rounded-full flex items-center justify-center hover:bg-white/20 transition" title="Daftar lagu">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+</button>
+
+<!-- Layout utama -->
+<main class="relative z-10 h-full w-full flex flex-col md:flex-row items-stretch">
+
+  <!-- Sisi kiri: pemutar -->
+  <section class="md:w-1/2 flex items-center justify-center px-6 md:px-14 py-6 md:py-0 shrink-0">
+    <div class="w-full max-w-[440px]">
+      <div class="cover-shadow">
+        <div id="coverBox" class="aspect-square w-full rounded-2xl overflow-hidden bg-white/10 transition-transform duration-500">
+          <img id="cover" alt="Sampul" class="w-full h-full object-cover" style="transform:scale(1.38)" crossorigin="anonymous">
+        </div>
+      </div>
+
+      <div class="mt-6 md:mt-8">
+        <h1 id="title" class="text-xl md:text-2xl font-bold truncate">Memuat…</h1>
+        <p id="artist" class="text-base md:text-lg text-white/60 truncate">—</p>
+        <p id="status" class="text-sm text-amber-300 mt-1 min-h-[1.25rem]"></p>
+      </div>
+
+      <div class="mt-4">
+        <input id="seek" type="range" min="0" max="1000" value="0" class="w-full">
+        <div class="flex justify-between text-xs text-white/60 mt-2 tabular-nums">
+          <span id="tCur">0:00</span><span id="tDur">-0:00</span>
+        </div>
+      </div>
+
+      <div class="mt-4 flex items-center justify-center gap-10">
+        <button id="prev" class="ctrl" title="Sebelumnya">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6v12L9.5 12z"/></svg>
+        </button>
+        <button id="play" class="ctrl" title="Putar/Jeda">
+          <svg id="icoPlay" width="56" height="56" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="icoPause" class="hidden" width="56" height="56" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        </button>
+        <button id="next" class="ctrl" title="Berikutnya">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6l10.5 6L4 18z"/></svg>
+        </button>
+      </div>
+
+      <div class="mt-6 flex items-center gap-3">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="opacity-70"><path d="M3 9v6h4l5 5V4L7 9z"/></svg>
+        <input id="vol" type="range" min="0" max="100" value="80" class="w-full">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="opacity-70"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sisi kanan: lirik -->
+  <section class="md:w-1/2 flex-1 min-h-0 relative">
+    <div id="lyrics" class="relative h-full overflow-y-auto px-6 md:px-10 text-3xl md:text-4xl lg:text-[2.6rem]"></div>
+  </section>
+</main>
+
+<!-- Drawer daftar lagu -->
+<div id="scrim" class="fixed inset-0 bg-black/40 z-40 hidden"></div>
+<aside id="drawer" class="glass fixed top-0 right-0 h-full w-full sm:w-[380px] z-50 translate-x-full flex flex-col" style="background:rgba(20,20,25,.55)">
+  <div class="flex items-center justify-between p-5 pb-3">
+    <h2 class="text-lg font-semibold">Lagu Viral</h2>
+    <button id="closeDrawer" class="w-9 h-9 rounded-full hover:bg-white/15 flex items-center justify-center">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+
+  <div class="px-5 pb-3">
+    <label class="text-xs uppercase tracking-wider text-white/50">Tambah dari YouTube</label>
+    <div class="flex gap-2 mt-2">
+      <input id="ytUrl" type="text" placeholder="Tempel link YouTube…" class="flex-1 min-w-0 bg-white/10 rounded-lg px-3 py-2 text-sm outline-none placeholder-white/40 focus:bg-white/15 select-text">
+      <button id="addBtn" class="bg-white text-black rounded-lg px-4 text-sm font-semibold hover:bg-white/85">Tambah</button>
+    </div>
+    <p id="addMsg" class="text-xs text-white/60 mt-2 min-h-[1rem]"></p>
+  </div>
+
+  <div id="list" class="flex-1 overflow-y-auto px-3 space-y-1"></div>
+
+  <div class="p-5 pt-3 border-t border-white/10">
+    <label class="text-xs uppercase tracking-wider text-white/50">Lirik manual (format LRC) untuk lagu ini</label>
+    <textarea id="lrcInput" rows="4" placeholder="[00:12.50] baris lirik pertama&#10;[00:17.00] baris lirik kedua" class="w-full mt-2 bg-white/10 rounded-lg px-3 py-2 text-xs outline-none placeholder-white/30 focus:bg-white/15 select-text resize-none"></textarea>
+    <button id="lrcBtn" class="mt-2 w-full bg-white/15 hover:bg-white/25 rounded-lg py-2 text-sm font-medium">Terapkan Lirik</button>
+  </div>
+</aside>
+
+<script>
+/* ============ DATA LAGU ============
+   Lirik TIDAK ditanam di sini karena berhak cipta. Lirik bertanda waktu (LRC)
+   diambil otomatis saat runtime dari LRCLIB (lrclib.net), atau bisa ditempel
+   manual lewat panel "Lirik manual" di drawer. */
+const songs = [
+  { id: 'dQw4w9WgXcQ', title: 'Never Gonna Give You Up', artist: 'Rick Astley',        lyrics: null },
+  { id: 'kJQP7kiw5Fk', title: 'Despacito',               artist: 'Luis Fonsi',         lyrics: null },
+  { id: '9bZkp7q19f0', title: 'Gangnam Style',           artist: 'PSY',                lyrics: null },
+  { id: 'OPf0YbXqDm0', title: 'Uptown Funk',             artist: 'Mark Ronson',        lyrics: null },
+  { id: 'JGwWNGJdvx8', title: 'Shape of You',            artist: 'Ed Sheeran',         lyrics: null },
+  { id: 'RgKAFK5djSk', title: 'See You Again',           artist: 'Wiz Khalifa',        lyrics: null },
+];
+
+/* ============ PENYIMPANAN OTOMATIS (localStorage) ============ */
+const STORE_KEY = 'musicPlayerSongs.v1';
+function saveSongs() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(
+      songs.map(s => ({ id: s.id, title: s.title, artist: s.artist, manual: s.manual || null }))
+    ));
+  } catch (e) {}
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+  if (Array.isArray(saved) && saved.length) {
+    songs.splice(0, songs.length, ...saved.map(s => ({ id: s.id, title: s.title, artist: s.artist, manual: s.manual || null, lyrics: null })));
+  }
+} catch (e) {}
+
+/* ============ STATE & ELEMEN ============ */
+const $ = id => document.getElementById(id);
+let player, ready = false, idx = 0, playing = false, dragging = false;
+let activeLine = -2, bgFlip = false, userScrollUntil = 0;
+
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); };
+const thumb = id => `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+const setFill = el => el.style.setProperty('--p', (el.value - el.min) / (el.max - el.min) * 100 + '%');
+
+/* ============ YOUTUBE IFRAME API ============ */
+const tag = document.createElement('script');
+tag.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(tag);
+
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player('ytPlayer', {
+    width: 200, height: 200, videoId: songs[idx].id,
+    playerVars: Object.assign({ controls: 0, disablekb: 1, playsinline: 1, rel: 0, modestbranding: 1 },
+      location.protocol.startsWith('http') ? { origin: location.origin } : {}),
+    events: {
+      onReady: () => { ready = true; player.setVolume($('vol').value); },
+      onStateChange: e => {
+        playing = e.data === YT.PlayerState.PLAYING;
+        $('icoPlay').classList.toggle('hidden', playing);
+        $('icoPause').classList.toggle('hidden', !playing);
+        $('coverBox').style.transform = playing ? 'scale(1)' : 'scale(.9)';
+        if (e.data === YT.PlayerState.ENDED) nextSong();
+      },
+      onError: e => {
+        const c = e.data, st = $('status');
+        if (location.protocol === 'file:') st.textContent = `Error ${c}: buka lewat server lokal (http://localhost), bukan klik dua kali file.`;
+        else if (c === 101 || c === 150) { st.textContent = 'Video ini dilarang disematkan. Lanjut ke lagu berikutnya…'; setTimeout(nextSong, 2000); }
+        else if (c === 100) { st.textContent = 'Video tidak ditemukan / privat.'; }
+        else st.textContent = `Gagal memutar (error ${c}).`;
+      }
+    }
+  });
+};
+
+/* ============ LOAD LAGU ============ */
+function loadSong(i, autoplay = true) {
+  idx = (i + songs.length) % songs.length;
+  const s = songs[idx];
+  $('status').textContent = '';
+  $('title').textContent = s.title;
+  $('artist').textContent = s.artist;
+  const img = $('cover');
+  img.src = thumb(s.id);
+  setBackground(thumb(s.id));
+  $('seek').value = 0; setFill($('seek'));
+  $('tCur').textContent = '0:00'; $('tDur').textContent = '-0:00';
+  document.title = `${s.title} — ${s.artist}`;
+  renderList();
+  if (ready) { autoplay ? player.loadVideoById(s.id) : player.cueVideoById(s.id); }
+  fetchLyrics(s);
+  renderLyrics(s);
+}
+
+function setBackground(url) {
+  const show = bgFlip ? $('bgA') : $('bgB');
+  const hide = bgFlip ? $('bgB') : $('bgA');
+  show.style.backgroundImage = `url(${url})`;
+  show.style.opacity = 1; hide.style.opacity = 0;
+  bgFlip = !bgFlip;
+}
+
+const nextSong = () => loadSong(idx + 1);
+const prevSong = () => {
+  if (ready && player.getCurrentTime() > 3) player.seekTo(0, true);
+  else loadSong(idx - 1);
+};
+
+/* ============ LIRIK ============ */
+function parseLRC(text) {
+  const out = [];
+  (text || '').split(/\r?\n/).forEach(row => {
+    const stamps = [...row.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    const txt = row.replace(/\[[^\]]*\]/g, '').trim();
+    stamps.forEach(m => out.push({ t: parseInt(m[1]) * 60 + parseFloat(m[2]), text: txt }));
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+
+async function fetchLyrics(s) {
+  if (s.lyrics) return;
+  if (s.manual) { s.lyrics = parseLRC(s.manual); s.state = s.lyrics.length ? 'ok' : 'none'; renderLyrics(s); return; }
+  s.lyrics = []; s.state = 'loading';
+  renderLyrics(s);
+  try {
+    const q = new URLSearchParams({ track_name: s.title, artist_name: s.artist });
+    let r = await fetch('https://lrclib.net/api/get?' + q);
+    let data = r.ok ? await r.json() : null;
+    if (!data || !data.syncedLyrics) {
+      r = await fetch('https://lrclib.net/api/search?q=' + encodeURIComponent(`${s.artist} ${s.title}`));
+      const arr = r.ok ? await r.json() : [];
+      data = arr.find(x => x.syncedLyrics) || null;
+    }
+    s.lyrics = data && data.syncedLyrics ? parseLRC(data.syncedLyrics) : [];
+    s.state = s.lyrics.length ? 'ok' : 'none';
+  } catch (e) { s.lyrics = []; s.state = 'none'; }
+  if (songs[idx] === s) renderLyrics(s);
+}
+
+function renderLyrics(s) {
+  const box = $('lyrics');
+  activeLine = -2;
+  box.innerHTML = '';
+  const pad = '<div style="height:38vh"></div>';
+  if (!s.lyrics || !s.lyrics.length) {
+    const msg = s.state === 'loading' ? 'Memuat lirik…' : 'Lirik bertanda waktu tidak ditemukan.<br><span class="text-base font-normal text-white/50">Tempel lirik format LRC lewat menu daftar lagu (pojok kanan atas).</span>';
+    box.innerHTML = pad + `<p class="px-2 text-white/60 font-semibold">${msg}</p>` + pad;
+    return;
+  }
+  box.insertAdjacentHTML('beforeend', pad);
+  s.lyrics.forEach((l, i) => {
+    const d = document.createElement('div');
+    d.className = 'line'; d.dataset.i = i;
+    d.textContent = l.text || '♪';
+    d.onclick = () => { if (ready) { player.seekTo(l.t, true); player.playVideo(); } };
+    box.appendChild(d);
+  });
+  box.insertAdjacentHTML('beforeend', pad);
+  styleLines(-1, true);
+}
+
+function styleLines(active, instant) {
+  const lines = $('lyrics').querySelectorAll('.line');
+  lines.forEach((el, i) => {
+    const d = Math.abs(i - active);
+    if (active < 0) { el.style.opacity = .45; el.style.transform = 'scale(.92)'; el.style.filter = 'blur(1px)'; return; }
+    el.style.opacity = d === 0 ? 1 : Math.max(.12, .5 - d * .12);
+    el.style.transform = d === 0 ? 'scale(1.06)' : 'scale(.9)';
+    el.style.filter = d === 0 ? 'none' : `blur(${Math.min(d * .6, 2.5)}px)`;
+  });
+  if (active >= 0 && lines[active]) {
+    const box = $('lyrics'), el = lines[active];
+    const top = el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2;
+    if (Date.now() > userScrollUntil) box.scrollTo({ top, behavior: instant ? 'auto' : 'smooth' });
+  }
+}
+$('lyrics').addEventListener('wheel', () => userScrollUntil = Date.now() + 2500, { passive: true });
+$('lyrics').addEventListener('touchmove', () => userScrollUntil = Date.now() + 2500, { passive: true });
+
+/* ============ LOOP 200ms ============ */
+setInterval(() => {
+  if (!ready || typeof player.getCurrentTime !== 'function') return;
+  const t = player.getCurrentTime() || 0;
+  const d = player.getDuration() || 0;
+  if (!dragging && d > 0) {
+    $('seek').value = (t / d) * 1000; setFill($('seek'));
+    $('tCur').textContent = fmt(t);
+    $('tDur').textContent = '-' + fmt(d - t);
+  }
+  const L = songs[idx].lyrics;
+  if (L && L.length) {
+    let a = -1;
+    for (let i = 0; i < L.length; i++) { if (t >= L[i].t - 0.15) a = i; else break; }
+    if (a !== activeLine) { activeLine = a; styleLines(a); }
+  }
+}, 200);
+
+/* ============ KONTROL ============ */
+$('play').onclick = () => { if (!ready) return; playing ? player.pauseVideo() : player.playVideo(); };
+$('next').onclick = nextSong;
+$('prev').onclick = prevSong;
+
+$('seek').addEventListener('input', e => {
+  dragging = true; setFill(e.target);
+  const d = player ? player.getDuration() : 0;
+  $('tCur').textContent = fmt(e.target.value / 1000 * d);
+});
+$('seek').addEventListener('change', e => {
+  if (ready) player.seekTo(e.target.value / 1000 * player.getDuration(), true);
+  dragging = false;
+});
+$('vol').addEventListener('input', e => { setFill(e.target); if (ready) player.setVolume(e.target.value); });
+setFill($('vol'));
+
+/* ============ DRAWER & DAFTAR ============ */
+const drawer = $('drawer'), scrim = $('scrim');
+const openD = () => { drawer.classList.remove('translate-x-full'); scrim.classList.remove('hidden'); };
+const closeD = () => { drawer.classList.add('translate-x-full'); scrim.classList.add('hidden'); };
+$('openDrawer').onclick = openD; $('closeDrawer').onclick = closeD; scrim.onclick = closeD;
+
+function renderList() {
+  $('list').innerHTML = '';
+  songs.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'song-item flex items-center gap-3 p-2 rounded-xl hover:bg-white/10 cursor-pointer' + (i === idx ? ' active' : '');
+    el.innerHTML = `<div class="w-12 h-12 rounded-lg overflow-hidden bg-white/10 shrink-0"><img src="${thumb(s.id)}" class="w-full h-full object-cover" style="transform:scale(1.38)"></div>
+      <div class="min-w-0 flex-1"><div class="text-sm font-semibold truncate"></div><div class="text-xs text-white/55 truncate"></div></div>
+      <button class="del w-8 h-8 shrink-0 rounded-full hover:bg-white/20 text-white/40 hover:text-white" title="Hapus dari daftar">✕</button>`;
+    el.querySelector('.font-semibold').textContent = s.title;
+    el.querySelector('.text-white\\/55').textContent = s.artist;
+    el.onclick = () => { loadSong(i); closeD(); };
+    el.querySelector('.del').onclick = ev => {
+      ev.stopPropagation();
+      if (songs.length <= 1) return;
+      songs.splice(i, 1);
+      saveSongs();
+      if (i === idx) loadSong(Math.min(i, songs.length - 1));
+      else { if (i < idx) idx--; renderList(); }
+    };
+    $('list').appendChild(el);
+  });
+}
+
+function extractId(u) {
+  const m = u.match(/(?:youtu\.be\/|v=|embed\/|shorts\/|live\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : (/^[A-Za-z0-9_-]{11}$/.test(u.trim()) ? u.trim() : null);
+}
+
+$('addBtn').onclick = async () => {
+  const url = $('ytUrl').value.trim(), msg = $('addMsg');
+  const id = extractId(url);
+  if (!id) { msg.textContent = 'Link YouTube tidak valid.'; return; }
+  msg.textContent = 'Mengambil info video…';
+  let title = 'Lagu Baru', artist = 'YouTube';
+  try {
+    const r = await fetch('https://noembed.com/embed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id));
+    const j = await r.json();
+    let raw = (j.title || title).replace(/\s*[\(\[][^\)\]]*(official|video|audio|lyric|mv|hd|4k)[^\)\]]*[\)\]]/gi, '').trim();
+    const parts = raw.split(/\s[-–—]\s/);
+    if (parts.length >= 2) { artist = parts[0].trim(); title = parts.slice(1).join(' - ').trim(); }
+    else { title = raw; artist = (j.author_name || artist).replace(/ - Topic$|VEVO$/i, '').trim(); }
+  } catch (e) {}
+  const dup = songs.findIndex(s => s.id === id);
+  if (dup >= 0) { $('ytUrl').value = ''; msg.textContent = 'Lagu sudah ada di daftar.'; loadSong(dup); return; }
+  songs.push({ id, title, artist, lyrics: null });
+  saveSongs();
+  $('ytUrl').value = ''; msg.textContent = `Ditambahkan: ${title}`;
+  loadSong(songs.length - 1);
+};
+$('ytUrl').addEventListener('keydown', e => { if (e.key === 'Enter') $('addBtn').click(); });
+
+$('lrcBtn').onclick = () => {
+  const parsed = parseLRC($('lrcInput').value);
+  if (!parsed.length) { $('addMsg').textContent = 'Format LRC tidak terbaca. Contoh: [00:12.50] teks'; return; }
+  songs[idx].lyrics = parsed; songs[idx].state = 'ok';
+  songs[idx].manual = $('lrcInput').value; saveSongs();
+  renderLyrics(songs[idx]); closeD();
+};
+
+/* ============ KEYBOARD ============ */
+document.addEventListener('keydown', e => {
+  if (['INPUT','TEXTAREA'].includes(e.target.tagName) && e.target.type !== 'range') return;
+  if (e.code === 'Space') { e.preventDefault(); $('play').click(); }
+  if (e.code === 'ArrowRight') nextSong();
+  if (e.code === 'ArrowLeft') prevSong();
+});
+
+/* ============ INIT ============ */
+loadSong(0, false);
+</script>
+</body>
+</html>
